@@ -1,0 +1,68 @@
+package org.siri_hate.api_gateway.security;
+
+import org.jspecify.annotations.NonNull;
+import org.siri_hate.api_gateway.model.CustomGatewayProperties;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.cloud.gateway.filter.GatewayFilterChain;
+import org.springframework.cloud.gateway.filter.GlobalFilter;
+import org.springframework.core.Ordered;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpStatus;
+import org.springframework.stereotype.Component;
+import org.springframework.web.server.ServerWebExchange;
+import reactor.core.publisher.Mono;
+
+@Component
+public class JwtAuthFilter implements GlobalFilter, Ordered {
+
+    private final JwtService jwtService;
+    private final CustomGatewayProperties customGatewayProperties;
+
+    @Autowired
+    public JwtAuthFilter(JwtService jwtService, CustomGatewayProperties customGatewayProperties) {
+        this.jwtService = jwtService;
+        this.customGatewayProperties = customGatewayProperties;
+    }
+
+    @Override
+    @NonNull
+    public Mono<Void> filter(ServerWebExchange exchange, @NonNull GatewayFilterChain chain) {
+
+        String path = exchange.getRequest().getPath().value();
+        if (customGatewayProperties.getFilterExcludePaths().contains(path)) {
+            return chain.filter(exchange);
+        }
+
+        String authHeader = exchange.getRequest().getHeaders().getFirst(HttpHeaders.AUTHORIZATION);
+        if (authHeader == null || !authHeader.startsWith("Bearer ")) {
+            exchange.getResponse().setStatusCode(HttpStatus.UNAUTHORIZED);
+            return exchange.getResponse().setComplete();
+        }
+
+        String username;
+        String token = authHeader.substring(7);
+        try {
+            username = jwtService.extractUsername(token);
+            if (!jwtService.isTokenValid(token)) {
+                exchange.getResponse().setStatusCode(HttpStatus.UNAUTHORIZED);
+                return exchange.getResponse().setComplete();
+            }
+        } catch (Exception e) {
+            exchange.getResponse().setStatusCode(HttpStatus.UNAUTHORIZED);
+            return exchange.getResponse().setComplete();
+        }
+
+        ServerWebExchange mutatedExchange = exchange.mutate()
+                .request(builder -> {
+                    builder.header("X-User-Name", username);
+                    builder.headers(httpHeaders -> httpHeaders.remove(HttpHeaders.AUTHORIZATION));
+                })
+                .build();
+        return chain.filter(mutatedExchange);
+    }
+
+    @Override
+    public int getOrder() {
+        return -100;
+    }
+}
