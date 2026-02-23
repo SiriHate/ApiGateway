@@ -29,24 +29,49 @@ public class JwtAuthFilter implements GlobalFilter, Ordered {
     public Mono<Void> filter(ServerWebExchange exchange, @NonNull GatewayFilterChain chain) {
 
         String path = exchange.getRequest().getPath().value();
+
+        if (path.startsWith("/ws")) {
+            return handleWebSocketAuth(exchange, chain);
+        }
+
         if (customGatewayProperties.getFilterExcludePaths().contains(path)) {
             return chain.filter(exchange);
         }
 
+        return handleHttpAuth(exchange, chain);
+    }
+
+    private Mono<Void> handleHttpAuth(ServerWebExchange exchange, GatewayFilterChain chain) {
         String authHeader = exchange.getRequest().getHeaders().getFirst(HttpHeaders.AUTHORIZATION);
         if (authHeader == null || !authHeader.startsWith("Bearer ")) {
             exchange.getResponse().setStatusCode(HttpStatus.UNAUTHORIZED);
             return exchange.getResponse().setComplete();
         }
 
-        String username;
         String token = authHeader.substring(7);
+        return validateAndForward(exchange, chain, token);
+    }
+
+    private Mono<Void> handleWebSocketAuth(ServerWebExchange exchange, GatewayFilterChain chain) {
+        String token = exchange.getRequest().getQueryParams().getFirst("token");
+        if (token == null || token.isBlank()) {
+            exchange.getResponse().setStatusCode(HttpStatus.UNAUTHORIZED);
+            return exchange.getResponse().setComplete();
+        }
+
+        return validateAndForward(exchange, chain, token);
+    }
+
+    private Mono<Void> validateAndForward(ServerWebExchange exchange, GatewayFilterChain chain, String token) {
+        String username;
+        String roles;
         try {
-            username = jwtService.extractUsername(token);
             if (!jwtService.isTokenValid(token)) {
                 exchange.getResponse().setStatusCode(HttpStatus.UNAUTHORIZED);
                 return exchange.getResponse().setComplete();
             }
+            username = jwtService.extractUsername(token);
+            roles = jwtService.extractRoles(token);
         } catch (Exception e) {
             exchange.getResponse().setStatusCode(HttpStatus.UNAUTHORIZED);
             return exchange.getResponse().setComplete();
@@ -55,6 +80,7 @@ public class JwtAuthFilter implements GlobalFilter, Ordered {
         ServerWebExchange mutatedExchange = exchange.mutate()
                 .request(builder -> {
                     builder.header("X-User-Name", username);
+                    builder.header("X-User-Roles", roles);
                     builder.headers(httpHeaders -> httpHeaders.remove(HttpHeaders.AUTHORIZATION));
                 })
                 .build();

@@ -29,6 +29,11 @@ public class JwtService {
         return extractClaim(token, Claims::getSubject);
     }
 
+    public String extractRoles(String token) {
+        String roles = extractClaim(token, claims -> (String) claims.get("roles"));
+        return roles != null ? roles : "";
+    }
+
     public boolean isTokenValid(String token) {
         boolean isTokenExpired = extractClaim(token, Claims::getExpiration).before(new Date());
         return !isTokenExpired;
